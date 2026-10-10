@@ -44,24 +44,13 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMAGES_DIR = os.path.join(BASE_DIR, "obrazy")
-RESULTS_DIR = os.path.join(BASE_DIR, "wyniki")
+RESULTS_DIR = os.path.join(os.path.expanduser("~"), "Pictures", "ColorFiltersResults")
 SETTINGS_FILE = os.path.join(BASE_DIR, "color_filters_settings.json")
 os.makedirs(IMAGES_DIR, exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-PREVIEW_MAX_SIZE = (800, 600)
 DEBOUNCE_MS = 200
 
-def get_dynamic_preview_size(img):
-    w, h = img.size
-    aspect = w / h
-
-    # zdjęcia poziome (szerokie)
-    if aspect > 1.2:
-        return (900, 600)   # Twoje 600×400 dla poziomych
-
-    # zdjęcia pionowe / kwadratowe
-    return PREVIEW_MAX_SIZE
 
 default_settings = {"language": "pl", "theme": "dark", "last_image": None}
 try:
@@ -104,7 +93,7 @@ translations = {
         "theme": "Motyw",
         "light": "Jasny",
         "dark": "Ciemny",
-        "hint": "Zmiany stosują się automatycznie.",
+
         "reset": "Resetuj do oryginału",
         "commit": "Ustaw wynik jako nowy oryginał",
         "Szum_Gauss": "Szum Gaussowski (std)",
@@ -145,7 +134,6 @@ translations = {
         "theme": "Theme",
         "light": "Light",
         "dark": "Dark",
-        "hint": "Changes are applied automatically.",
         "reset": "Reset to original",
         "commit": "Use result as new original",
         "Szum_Gauss": "Gaussian noise (std)",
@@ -168,21 +156,6 @@ def ensure_rgb(img):
     return img.convert("RGB") if img.mode != "RGB" else img
 
 
-def make_preview_source(img):
-    if img is None:
-        return None
-
-    max_size = get_dynamic_preview_size(img)
-
-    pv = img.copy()
-    pv.thumbnail(max_size, Image.LANCZOS)
-    return pv
-
-
-def make_preview(img, max_size=(400, 400)):
-    pv = img.copy()
-    pv.thumbnail(max_size, Image.LANCZOS)
-    return pv
 
 
 def adjust_color_balance(img, r_mul=1.0, g_mul=1.0, b_mul=1.0):
@@ -268,17 +241,18 @@ def apply_gaussian_per_channel(img, radius=1):
     )
 
 def swap_images():
-    global orig_image, working_image, orig_preview
+    global orig_image, working_image, noise_base_image
 
     if orig_image is None or working_image is None:
         return
 
-    # zamiana obrazów
-    orig_image, working_image = working_image, orig_image
+    # lewy ← prawy
+    orig_image = working_image.copy()
+    noise_base_image = None
 
-    # odśwież preview
-    orig_preview = make_preview_source(orig_image)
     show_images(orig_image, working_image)
+
+
 
 
 # --- SZUMY ---
@@ -492,55 +466,53 @@ FONT_NORMAL = ("TkDefaultFont", 13)
 FONT_BOLD = ("TkDefaultFont", 15)
 
 root.title("Color Filters")
-root.geometry("1600x900")
+root.state('zoomed')
 fullscreen_state = False
+
+
+def fit_image_to_label(pil_img, label):
+    if pil_img is None:
+        return None
+
+    lw = label.winfo_width()
+    lh = label.winfo_height()
+
+    if lw < 10 or lh < 10:
+        return None
+
+    img = pil_img.copy()
+
+    scale = min(lw / img.width, lh / img.height)
+    new_size = (int(img.width * scale), int(img.height * scale))
+
+    img = img.resize(new_size, Image.LANCZOS)
+    return ImageTk.PhotoImage(img)
+
 
 
 # --- Funkcja do wyświetlania obrazów w Labelach ---
 def show_images(orig_img, working_img):
-    """Wyświetla obraz oryginalny i roboczy w Labelach GUI (tego samego rozmiaru)."""
-    try:
-        if orig_img is None and working_img is None:
-            image_label_orig.config(image=None, text="Brak")
-            image_label_orig.image = None
-            image_label_working.config(image=None, text="Brak")
-            image_label_working.image = None
-            return
+    # ORYGINAŁ
+    if orig_img:
+        ph1 = fit_image_to_label(orig_img, image_label_orig)
+        if ph1:
+            image_label_orig.config(image=ph1)
+            image_label_orig.image = ph1
 
-        orig_preview = make_preview_source(orig_img) if orig_img else None
-        working_preview = make_preview_source(working_img) if working_img else None
+    # WYNIK
+    if working_img:
+        ph2 = fit_image_to_label(working_img, image_label_working)
+        if ph2:
+            image_label_working.config(image=ph2)
+            image_label_working.image = ph2
 
-        if orig_preview and working_preview:
-            w = min(orig_preview.width, working_preview.width)
-            h = min(orig_preview.height, working_preview.height)
-            orig_preview = orig_preview.resize((w, h), Image.LANCZOS)
-            working_preview = working_preview.resize((w, h), Image.LANCZOS)
 
-        if orig_preview:
-            orig_photo = ImageTk.PhotoImage(orig_preview)
-            image_label_orig.config(image=orig_photo, text="")
-            image_label_orig.image = orig_photo
-        else:
-            image_label_orig.config(image=None, text="")
-            image_label_orig.image = None
-
-        if working_preview:
-            working_photo = ImageTk.PhotoImage(working_preview)
-            image_label_working.config(image=working_photo, text="")
-            image_label_working.image = working_photo
-        else:
-            image_label_working.config(image=None, text="")
-            image_label_working.image = None
-
-    except Exception as e:
-        print("Błąd przy wyświetlaniu obrazów:", e)
 
 
 def toggle_fullscreen(event=None):
     global fullscreen_state
     fullscreen_state = not fullscreen_state
     root.attributes("-fullscreen", fullscreen_state)
-    refresh_preview()
 
 
 root.bind("<F11>", toggle_fullscreen)
@@ -697,7 +669,7 @@ controls_canvas = tk.Canvas(
     controls_container,
     highlightthickness=0,
     bg="#333",
-    width=400  # Zwiększono szerokość panelu
+    width=440  # Zwiększono szerokość panelu
 )
 
 controls_vsb = ttk.Scrollbar(
@@ -778,6 +750,11 @@ images_container.pack(
     padx=4,
     pady=(2, 2)
 )
+def on_resize(event=None):
+    show_images(orig_image, working_image)
+
+images_container.bind("<Configure>", on_resize)
+
 
 swap_bar = tk.Frame(images_container, bg=images_container["bg"])
 swap_bar.pack(side="top", fill="x")
@@ -804,10 +781,10 @@ right_image_frame = tk.Frame(images_frame, bg="gray")
 right_image_frame.pack(side="left", fill="both", expand=True)
 
 image_label_orig = tk.Label(left_image_frame, bg="gray", anchor="center", highlightthickness=0, bd=0)
-image_label_orig.pack(expand=True)
+image_label_orig.pack(fill="both", expand=True)
 
 image_label_working = tk.Label(right_image_frame, bg="gray", anchor="center", highlightthickness=0, bd=0)
-image_label_working.pack(expand=True)
+image_label_working.pack(fill="both", expand=True)
 
 
 def _on_controls_configure(event):
@@ -838,11 +815,11 @@ apply_theme()
 # state
 base_image = None        # zawsze pierwszy, „czysty” obraz z pliku
 orig_image = None        # aktualny oryginał (może być po commit)
-orig_preview = None
 working_image = None
 preview_tk = None
 _debounce_job = None
 _vector_thread = None
+noise_base_image = None
 
 
 # control vars
@@ -920,67 +897,76 @@ def make_colored_scale(
 
 # --- processing (preview + full) ---
 def apply_filters_preview():
-    global working_image, orig_preview
+    global working_image
+
     if orig_image is None:
         return
 
-    if orig_preview is None:
-        orig_preview = make_preview_source(orig_image)
-    img = orig_preview.copy()
+    img = working_image.copy()
 
-    img = adjust_color_balance(img, color_balance_r.get(), color_balance_g.get(), color_balance_b.get())
+    img = adjust_color_balance(img,
+        color_balance_r.get(),
+        color_balance_g.get(),
+        color_balance_b.get()
+    )
+
     if abs(hue_var.get()) > 0.01:
         img = hue_shift(img, hue_var.get())
+
     if abs(saturation_var.get() - 1) > 0.01:
         img = adjust_saturation(img, saturation_var.get())
+
     if sepia_var.get() > 0:
         img = fast_sepia(img, sepia_var.get())
+
     if equalize_var.get():
         img = equalize_per_channel(img)
+
     if blur_var.get() > 0.01:
         img = apply_blur(img, blur_var.get())
+
     if abs(sharpen_var.get() - 1) > 0.01:
         img = apply_sharpen(img, sharpen_var.get())
-    if gauss_var.get() > 0.01:
-        img = add_gaussian_noise(img, std=gauss_var.get())
-    if saltpepper_var.get() > 0.01:
-        img = add_salt_and_pepper_noise(img, amount=saltpepper_var.get() / 100)
 
     working_image = img
-    if orig_image is not None:
-        show_images(orig_image, working_image)
-    refresh_preview()
+    show_images(orig_image, working_image)
 
 
 def apply_filters_full():
-    global working_image, orig_preview
+    global working_image
+
     if orig_image is None:
         return
-    img = orig_image.copy()
-    img = adjust_color_balance(img, color_balance_r.get(), color_balance_g.get(), color_balance_b.get())
+
+    img = working_image.copy()   # ✅ ZAWSZE od oryginału
+
+
+    img = adjust_color_balance(img,
+        color_balance_r.get(),
+        color_balance_g.get(),
+        color_balance_b.get()
+    )
+
     if abs(hue_var.get()) > 0.01:
         img = hue_shift(img, hue_var.get())
+
     if abs(saturation_var.get() - 1) > 0.01:
         img = adjust_saturation(img, saturation_var.get())
+
     if sepia_var.get() > 0:
         img = sepia(img, sepia_var.get())
+
     if equalize_var.get():
         img = equalize_per_channel(img)
+
     if blur_var.get() > 0.01:
         img = apply_blur(img, blur_var.get())
+
     if abs(sharpen_var.get() - 1) > 0.01:
         img = apply_sharpen(img, sharpen_var.get())
-    if gauss_var.get() > 0.01:
-        img = add_gaussian_noise(img, std=gauss_var.get())
-    if saltpepper_var.get() > 0.01:
-        img = add_salt_and_pepper_noise(img, amount=saltpepper_var.get() / 100)
 
     working_image = img
-    orig_preview = make_preview_source(img)
-    working_image = orig_preview.copy() if orig_preview else img
-    if orig_image is not None:
-        show_images(orig_image, working_image)
-    refresh_preview()
+    show_images(orig_image, working_image)
 
 
 def _run_full_in_background():
@@ -1005,8 +991,8 @@ def debounced_apply(*_):
 
 # --- median / lpf / vector median handlers (background) ---
 def apply_median_bg(button_widget=None):
-    global working_image, orig_preview
-    if orig_preview is None:
+    global working_image
+    if working_image is None:
         return
     r = max(0, int(median_var.get()))
     if r == 0:
@@ -1020,7 +1006,7 @@ def apply_median_bg(button_widget=None):
                 lambda: button_widget.config(text=t("apply_median"), state="normal"),
             )
         return
-    img_to_process = orig_preview.copy()
+    img_to_process = working_image.copy()
     if button_widget:
         try:
             button_widget.config(text="Przetwarzanie mediany...", state="disabled")
@@ -1032,8 +1018,7 @@ def apply_median_bg(button_widget=None):
             result = apply_median_per_channel(img_to_process, radius=r)
 
             def _finish():
-                global working_image, orig_preview
-                orig_preview = result.copy()
+                global working_image
                 working_image = result.copy()
                 show_images(orig_image, working_image)
                 refresh_preview()
@@ -1059,11 +1044,11 @@ def apply_median_bg(button_widget=None):
 
 
 def apply_lpf_bg(button_widget=None):
-    global working_image, orig_preview
-    if orig_preview is None:
+    global working_image
+    if working_image is None:
         return
     r = max(0, lpf_var.get())
-    img_to_process = orig_preview.copy()
+    img_to_process = working_image.copy()
     if button_widget:
         try:
             button_widget.config(text="Przetwarzanie LPF...", state="disabled")
@@ -1075,8 +1060,7 @@ def apply_lpf_bg(button_widget=None):
             result = apply_gaussian_per_channel(img_to_process, radius=r)
 
             def _finish():
-                global working_image, orig_preview
-                orig_preview = result.copy()
+                global working_image
                 working_image = result.copy()
                 show_images(orig_image, working_image)
                 refresh_preview()
@@ -1101,13 +1085,53 @@ def apply_lpf_bg(button_widget=None):
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def apply_noise_only():
+    global working_image, noise_base_image, orig_image
+
+    if orig_image is None:
+        return
+
+    # pierwsza baza dla szumu
+    if noise_base_image is None:
+        noise_base_image = orig_image.copy()
+
+    img = noise_base_image.copy()
+
+    if gauss_var.get() > 0:
+        img = add_gaussian_noise(img, std=gauss_var.get())
+
+    if saltpepper_var.get() > 0:
+        img = add_salt_and_pepper_noise(
+            img,
+            amount=saltpepper_var.get() / 100
+        )
+
+    # 🔑 SZUM STAJE SIĘ NOWĄ BAZĄ PIPELINE'U
+    working_image = img.copy()
+    noise_base_image = img.copy()
+
+
+    # reset suwaków filtrów (bo nowa baza)
+    color_balance_r.set(1.0)
+    color_balance_g.set(1.0)
+    color_balance_b.set(1.0)
+    hue_var.set(0.0)
+    saturation_var.set(1.0)
+    sepia_var.set(0.0)
+    equalize_var.set(False)
+    blur_var.set(0.0)
+    sharpen_var.set(1.0)
+
+    show_images(orig_image, working_image)
+
+
+
 def _vector_worker(img, radius, button_widget):
     try:
         result = apply_vector_median_to(img, radius)
 
         def _finish():
-            global working_image, orig_preview
-            orig_preview = result.copy()
+            global working_image
             working_image = result.copy()
             show_images(orig_image, working_image)
             refresh_preview()
@@ -1157,7 +1181,9 @@ def refresh_preview():
 
 # --- open/save/reset ---
 def open_image():
-    global base_image, orig_image, working_image, orig_preview
+    global base_image, orig_image, working_image, noise_base_image
+    noise_base_image = None
+
 
     path = filedialog.askopenfilename(
         initialdir=IMAGES_DIR,
@@ -1171,7 +1197,6 @@ def open_image():
         base_image = Image.open(path).convert("RGB")  # ZAPAMIĘTANY na stałe
         orig_image = base_image.copy()               # bieżący „oryginał”
         working_image = orig_image.copy()
-        orig_preview = make_preview_source(orig_image)
 
         settings["last_image"] = path
         save_settings()
@@ -1193,53 +1218,45 @@ def save_settings():
 
 
 def save_image():
-    if orig_image is None:
+    global working_image
+
+    # 1. Sprawdzenie czy w ogóle mamy jakiś przetworzony obraz
+    if working_image is None:
         messagebox.showwarning("", t("no_image"))
         return
-    apply_filters_full()
+
+    # 2. Wybór ścieżki zapisu przez użytkownika
     path = filedialog.asksaveasfilename(
         defaultextension=".png",
         initialdir=RESULTS_DIR,
         filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg"), ("All files", "*.*")],
     )
+
     if path:
-        full = orig_image.copy()
-        full = adjust_color_balance(
-            full, color_balance_r.get(), color_balance_g.get(), color_balance_b.get()
-        )
-        if abs(hue_var.get()) > 0.01:
-            full = hue_shift(full, hue_var.get())
-        if abs(saturation_var.get() - 1) > 0.01:
-            full = adjust_saturation(full, saturation_var.get())
-        if sepia_var.get() > 0:
-            full = sepia(full, sepia_var.get())
-        if equalize_var.get():
-            full = equalize_per_channel(full)
-        if blur_var.get() > 0.01:
-            full = apply_blur(full, blur_var.get())
-        if abs(sharpen_var.get() - 1) > 0.01:
-            full = apply_sharpen(full, sharpen_var.get())
         try:
-            full.save(path)
+            # 3. Zapisujemy aktualny stan roboczy (working_image).
+            # To on zawiera wszystkie zmiany: suwaki, szumy i filtry z przycisków.
+            working_image.save(path)
             messagebox.showinfo("", f"{t('save')} OK")
         except Exception as e:
-            messagebox.showerror("", f"Save failed: {e}")
-
-
+            messagebox.showerror("", f"Błąd zapisu: {e}")
 def reset_image():
+    global noise_base_image
+    noise_base_image = None
     """
     Reset do PIERWSZEGO, czystego obrazu z pliku (base_image)
     i wyzerowanie wszystkich suwaków.
     """
-    global base_image, orig_image, orig_preview, working_image
+    global base_image, orig_image, working_image
 
     if base_image is None:
         return
 
     # przywracamy pierwszy, nieprzetworzony obraz
     orig_image = base_image.copy()
-    orig_preview = make_preview_source(orig_image)
-    working_image = orig_preview.copy() if orig_preview else orig_image.copy()
+    working_image = orig_image.copy()
+    noise_base_image = None
+
 
     # reset suwaków / opcji
     color_balance_r.set(1.0)
@@ -1355,103 +1372,72 @@ def visualize_channels():
     if orig_image is None or working_image is None:
         return
 
-    space = color_space_var.get()  # "RGB" / "HSV" / "HSI" / "CIELAB"
+    space = color_space_var.get()
 
-    # --- NAZWY KANAŁÓW ---
-    if space == "RGB":
-        names = ["R", "G", "B"]
-        window_title = "Kanały RGB"
-    elif space == "HSV":
-        names = ["H", "S", "V"]
-        window_title = f"{t('visualize_channels')}: HSV"
-    elif space == "HSI":
-        names = ["H", "S", "I"]
-        window_title = f"{t('visualize_channels')}: HSI"
-    elif space == "CIELAB":
-        names = ["L", "a", "b"]
-        window_title = f"{t('visualize_channels')}: CIELAB"
-    else:
-        names = ["C1", "C2", "C3"]
-        window_title = f"Kanały {space}"
+    # --- DEFINICJA NAZW KANAŁÓW (uproszczone dla czytelności) ---
+    channel_configs = {
+        "RGB": (["R", "G", "B"], "Kanały RGB"),
+        "HSV": (["H", "S", "V"], f"{t('visualize_channels')}: HSV"),
+        "HSI": (["H", "S", "I"], f"{t('visualize_channels')}: HSI"),
+        "CIELAB": (["L", "a", "b"], f"{t('visualize_channels')}: CIELAB")
+    }
+    names, window_title = channel_configs.get(space, (["C1", "C2", "C3"], f"Kanały {space}"))
 
     # --- PRZYGOTOWANIE OBRAZÓW ---
     if space in ["HSV", "HSI", "CIELAB"]:
         o1, o2, o3 = convert_channels_python(space.lower(), orig_image, "orig")
         f1, f2, f3 = convert_channels_python(space.lower(), working_image, "filt")
-
-        # KOLEJNOŚĆ ZGODNA Z GUI:
-        # kanał → oryginał → filtr
-        all_images = [
-            o1, f1,
-            o2, f2,
-            o3, f3
-        ]
-
-    else:  # RGB
-        img_orig = orig_image
-        img_filt = working_image
-
-        o1, o2, o3 = img_orig.split()
-        f1, f2, f3 = img_filt.split()
+        all_images = [o1, o2, o3, f1, f2, f3]
+    else:
+        o1, o2, o3 = orig_image.split()
+        f1, f2, f3 = working_image.split()
 
         def make_color_channel(chan, idx):
             zero = Image.new("L", chan.size, 0)
-            if idx == 0:
-                return Image.merge("RGB", (chan, zero, zero))
-            if idx == 1:
-                return Image.merge("RGB", (zero, chan, zero))
-            if idx == 2:
-                return Image.merge("RGB", (zero, zero, chan))
+            chans = [zero, zero, zero]
+            chans[idx] = chan
+            return Image.merge("RGB", tuple(chans))
 
-        # KOLEJNOŚĆ ZGODNA Z GUI
         all_images = [
-            make_color_channel(o1, 0),  # R orig
-            make_color_channel(f1, 0),  # R filt
-            make_color_channel(o2, 1),  # G orig
-            make_color_channel(f2, 1),  # G filt
-            make_color_channel(o3, 2),  # B orig
-            make_color_channel(f3, 2),  # B filt
+            make_color_channel(o1, 0), make_color_channel(o2, 1), make_color_channel(o3, 2),
+            make_color_channel(f1, 0), make_color_channel(f2, 1), make_color_channel(f3, 2)
         ]
 
-    # --- OKNO ---
+    # --- KONFIGURACJA OKNA ---
     win = tk.Toplevel(root)
     win.title(window_title)
-    win.geometry("1100x650")
 
-    # --- KONFIGURACJA GRID ---
-    for r in (0, 2):
-        win.rowconfigure(r, weight=0)
-    for r in (1, 3):
-        win.rowconfigure(r, weight=1)
-    win.rowconfigure(4, weight=0)
+    # POPRAWKA: state zamiast geometry
+    win.state("zoomed")
 
-    for c in (0, 1, 2):
-        win.columnconfigure(c, weight=1)
+    # Wymuszenie aktualizacji, aby winfo_width() podało realne wymiary
+    win.update_idletasks()
 
-    # --- ETYKIETY + OBRAZY ---
+    # Konfiguracja wag (rozciąganie)
+    for r in (1, 3): win.rowconfigure(r, weight=1)
+    for r in (0, 2, 4): win.rowconfigure(r, weight=0)
+    for c in (0, 1, 2): win.columnconfigure(c, weight=1)
+
     labels = []
-    img_idx = 0
+    pil_images = all_images[:]
 
-    for channel_idx in range(3):        # kanały
-        for row_type in range(2):       # 0 = orig, 1 = filt
+    # Tworzenie siatki
+    idx = 0
+    for row_type in range(2):  # 0: oryginały, 1: po filtrze
+        label_row = row_type * 2
+        image_row = row_type * 2 + 1
+        img_type_text = t('original') if row_type == 0 else t('filtered')
 
-            img_type = t('original') if row_type == 0 else t('filtered')
-            label_row = row_type * 2
-            image_row = row_type * 2 + 1
-
-            lbl_text = f"{names[channel_idx]} ({img_type})"
-            name_lbl = tk.Label(win, text=lbl_text, font=FONT_NORMAL)
-            name_lbl.grid(row=label_row, column=channel_idx, sticky="w",
-                          padx=5, pady=(5, 2))
-
+        for col in range(3):
+            # Etykieta tekstowa
+            tk.Label(win, text=f"{names[col]} ({img_type_text})", font=FONT_NORMAL).grid(
+                row=label_row, column=col, sticky="w", padx=5, pady=(2, 0)
+            )
+            # Etykieta na obraz (Label)
             lbl = tk.Label(win, bg="black")
-            lbl.grid(row=image_row, column=channel_idx, sticky="nsew")
-
+            lbl.grid(row=image_row, column=col, sticky="nsew", padx=2, pady=2)
             labels.append(lbl)
-            img_idx += 1
 
-    # --- PRZECHOWANIE PIL-owych obrazów ---
-    pil_images = all_images[:]  # TERAZ KOLEJNOŚĆ JEST POPRAWNA
 
     def update_images(event=None):
         """Skalowanie obrazów podczas zmiany rozmiaru okna."""
@@ -1477,74 +1463,100 @@ def visualize_channels():
 
     # przycisk Zamknij na dole, w środku (w wierszu 4)
     close_btn = ttk.Button(win, text="Zamknij", command=win.destroy)
-    close_btn.grid(row=4, column=1, pady=10)
+    close_btn.grid(row=4, column=1, pady=2)
+
 
 def visualize_channels_gray():
-    # --- visualize channels w odcieniach szarości ---
+    global orig_image, working_image
+
     if orig_image is None or working_image is None:
         return
 
-    img_orig = orig_image
-    img_filt = working_image
     space = color_space_var.get()
 
+    # 1. Rozbicie na kanały w zależności od przestrzeni barw
     if space == "RGB":
-        o1, o2, o3 = img_orig.split()
-        f1, f2, f3 = img_filt.split()
+        o_chans = orig_image.split()
+        f_chans = working_image.split()
         names = ["R", "G", "B"]
     elif space == "HSV":
-        hsv_orig = img_orig.convert("HSV")
-        hsv_filt = img_filt.convert("HSV")
-        o1, o2, o3 = hsv_orig.split()
-        f1, f2, f3 = hsv_filt.split()
+        o_chans = orig_image.convert("HSV").split()
+        f_chans = working_image.convert("HSV").split()
         names = ["H", "S", "V"]
     elif space == "HSI":
-        o1, o2, o3 = rgb_to_hsi(img_orig)
-        f1, f2, f3 = rgb_to_hsi(img_filt)
+        # Funkcja rgb_to_hsi już zwraca krotkę (L, L, L)
+        o_chans = rgb_to_hsi(orig_image)
+        f_chans = rgb_to_hsi(working_image)
         names = ["H", "S", "I"]
     elif space == "CIELAB":
-        lab_orig = rgb_to_lab(img_orig)
-        lab_filt = rgb_to_lab(img_filt)
-        o1, o2, o3 = lab_orig.split()
-        f1, f2, f3 = lab_filt.split()
+        o_chans = rgb_to_lab(orig_image).split()
+        f_chans = rgb_to_lab(working_image).split()
         names = ["L", "a", "b"]
     else:
-        o1, o2, o3 = img_orig.split()
-        f1, f2, f3 = img_filt.split()
+        # Fallback do zwykłej szarości jeśli przestrzeń jest nieznana
+        o_chans = [orig_image.convert("L")] * 3
+        f_chans = [working_image.convert("L")] * 3
         names = ["C1", "C2", "C3"]
 
-    # okno na pełny ekran
+    # Przygotowanie listy obrazów (konwersja na RGB do wyświetlenia w Label)
+    all_images = []
+    for chan in o_chans:
+        all_images.append(chan.convert("L").convert("RGB"))
+    for chan in f_chans:
+        all_images.append(chan.convert("L").convert("RGB"))
+
+    # 2. Konfiguracja okna
     win = tk.Toplevel(root)
-    win.title(t("visualize_channels"))
-    win.state("zoomed")   # <--- tutaj maksymalizujemy okno
+    win.title(f"{t('visualize_channels_gray')} ({space})")
 
-    for i, (orig_chan, filt_chan) in enumerate(zip([o1, o2, o3], [f1, f2, f3])):
-        # ORYGINAŁ – w skali szarości
-        pv_orig = ImageTk.PhotoImage(
-            make_preview(orig_chan.convert("L").convert("RGB"), (400, 400))
-        )
-        lbl_o = tk.Label(win, text=f"{t('original')} {names[i]}")
-        lbl_o.grid(row=0, column=i)
-        canvas_o = tk.Label(win, image=pv_orig)
-        canvas_o.image = pv_orig
-        canvas_o.grid(row=1, column=i)
+    # Wymuszenie maksymalizacji
+    win.state("zoomed")
+    win.update_idletasks()
 
-        # PO FILTRZE – w skali szarości
-        pv_filt = ImageTk.PhotoImage(
-            make_preview(filt_chan.convert("L").convert("RGB"), (400, 400))
-        )
-        lbl_f = tk.Label(win, text=f"{t('filtered')} {names[i]}")
-        lbl_f.grid(row=2, column=i)
-        canvas_f = tk.Label(win, image=pv_filt)
-        canvas_f.image = pv_filt
-        canvas_f.grid(row=3, column=i)
+    # Konfiguracja wag (rozciąganie obrazów wierszy 1 i 3)
+    for r in (1, 3): win.rowconfigure(r, weight=1)
+    for r in (0, 2, 4): win.rowconfigure(r, weight=0)
+    for c in (0, 1, 2): win.columnconfigure(c, weight=1)
 
-    ttk.Button(
-        win,
-        text="Zamknij" if current_language == "pl" else "Close",
-        command=win.destroy,
-    ).grid(row=4, column=1, pady=6)
+    labels = []
+    pil_images = all_images[:]
 
+    # 3. Budowa siatki (2 rzędy obrazów po 3 kanały)
+    for row_type in range(2):  # 0: oryginały, 1: po filtrze
+        label_row = row_type * 2
+        image_row = row_type * 2 + 1
+        img_type_text = t('original') if row_type == 0 else t('filtered')
+
+        for col in range(3):
+            # Podpis kanału
+            tk.Label(win, text=f"{names[col]} ({img_type_text})", font=FONT_NORMAL).grid(
+                row=label_row, column=col, sticky="w", padx=5, pady=(2, 0)
+            )
+            # Kontener na obraz
+            lbl = tk.Label(win, bg="black")
+            lbl.grid(row=image_row, column=col, sticky="nsew", padx=2, pady=2)
+            labels.append(lbl)
+
+    # 4. Funkcja obsługująca zmianę rozmiaru i dopasowanie zdjęć
+    def update_images(event=None):
+        for lbl, img in zip(labels, pil_images):
+            w = lbl.winfo_width()
+            h = lbl.winfo_height()
+            if w > 10 and h > 10:
+                img_resized = img.copy()
+                img_resized.thumbnail((w, h), Image.LANCZOS)
+                ph = ImageTk.PhotoImage(img_resized)
+                lbl.config(image=ph)
+                lbl.image = ph
+
+    win.bind("<Configure>", update_images)
+
+    # Przycisk zamknięcia na dole
+    close_text = "Zamknij" if current_language == "pl" else "Close"
+    ttk.Button(win, text=close_text, command=win.destroy).grid(row=4, column=1, pady=5)
+
+    # Wywołanie po krótkim czasie, aby okno zdążyło się zmaksymalizować
+    win.after(100, update_images)
 
 
 # --- UI helpers ---
@@ -1561,6 +1573,11 @@ def make_value_label(parent, text, bg=None, fg=None):
 def on_scale_change(_val, var, label, fmt=None):
     v = var.get()
     label.config(text=fmt(v) if fmt else str(v))
+
+    # ❌ suwaki szumu NIE wywołują przeliczenia obrazu
+    if var in (gauss_var, saltpepper_var):
+        return
+
     debounced_apply()
 
 
@@ -1584,314 +1601,180 @@ def rebuild_ui():
 
     PADX = 30
 
+    # --- PANEL BOCZNY (CONTROLS) ---
+    icon_bar = tk.Frame(controls, bg=control_bg)
+    icon_bar.pack(fill="x", pady=(4, 8))
 
-    # 0: Szum Gaussowski (std) – suwak jak przy medianie
-    gauss_frame = ttk.Frame(top_bar)
-    gauss_frame.grid(row=0, column=0, padx=PADX, sticky="w")
-    ttk.Label(gauss_frame, text=t("Szum_Gauss")).pack(anchor="w")
+    # ➕ Otwórz
+    tk.Button(icon_bar, text="+", command=open_image, width=2, height=1, bg="#666666", fg="white",
+              relief="flat", font=("TkDefaultFont", 16)).pack(side="left", expand=True, fill="x", padx=2)
 
+    # ✔ Zapisz
+    tk.Button(icon_bar, text="✔", command=save_image, width=2, height=1, bg="#2ecc71", fg="black",
+              relief="flat", font=("TkDefaultFont", 16)).pack(side="left", expand=True, fill="x", padx=2)
 
-    gauss_lbl = make_value_label(
-        gauss_frame, f"{gauss_var.get():.0f}", bg=control_bg, fg=fg
-    )
-    make_colored_scale(
-        gauss_frame,
-        gauss_var,
-        0,
-        100,
-        gauss_lbl,
-        fmt_fn=lambda x: f"{float(x):.0f}",
-        resolution=1,
-        slider_color=SLIDER_COLOR_DEFAULT,
-        sliderlength=16,
-    )
+    # ⟲ Reset
+    tk.Button(icon_bar, text="⟲", command=reset_image, width=2, height=1, bg="#e74c3c", fg="white",
+              relief="flat", font=("TkDefaultFont", 16)).pack(side="left", expand=True, fill="x", padx=2)
 
-    # 1: Szum Pieprz i Sól (%) – suwak jak przy medianie
-    sp_frame = ttk.Frame(top_bar)
-    sp_frame.grid(row=0, column=1, padx=PADX, sticky="w")
-    ttk.Label(sp_frame, text=t("Szum_SaltPepper")).pack(anchor="w")
+    ttk.Separator(controls).pack(fill="x", pady=(8, 8))
 
-    for r in (0, 1):
-        top_bar.grid_rowconfigure(r, weight=0)
-    sp_lbl = make_value_label(
-        sp_frame, f"{saltpepper_var.get():.1f} %", bg=control_bg, fg=fg
-    )
-    make_colored_scale(
-        sp_frame,
-        saltpepper_var,
-        0,
-        10,
-        sp_lbl,
-        fmt_fn=lambda x: f"{float(x):.1f} %",
-        resolution=0.1,
-        slider_color=SLIDER_COLOR_DEFAULT,
-        sliderlength=16,
-    )
+    # --- GÓRNY PASEK (TOP BAR) - LOGIKA PRZEŁĄCZANIA ---
 
+    # Tworzymy dwa główne kontenery
+    noise_view = tk.Frame(top_bar, bg=control_bg)
+    filters_view = tk.Frame(top_bar, bg=control_bg)
 
-    # 2: Medianowy — opis kernela + suwak + przycisk
-    median_frame = ttk.Frame(top_bar)
-    median_frame.grid(row=1, column=0, padx=PADX, sticky="w")
+    def show_filters():
+        noise_view.pack_forget()
+        filters_view.pack(fill="x", expand=True, side="left")
 
+    def show_noise():
+        filters_view.pack_forget()
+        noise_view.pack(fill="x", expand=True, side="left")
+
+    # Startowy widok
+    noise_view.pack(fill="x", expand=True, side="left")
+
+    # === WIDOK 1: SZUMY ===
+
+    # Przycisk przejścia do filtrów (Niebieski prostokąt z rysunku)
+    btn_goto_filters = tk.Button(noise_view, text="FILTRY ➔", command=show_filters,
+                                 bg="#1E90FF", fg="white", font=("TkDefaultFont", 12, "bold"),
+                                 relief="raised", padx=15)
+    btn_goto_filters.pack(side="right", padx=PADX, pady=20)
+
+    # Szum Gaussowski
+    gauss_frame = ttk.Frame(noise_view)
+    gauss_frame.pack(side="left", padx=PADX)
+    g_head = tk.Frame(gauss_frame, bg=control_bg)
+    g_head.pack(fill="x")
+    tk.Label(g_head, text=t("Szum_Gauss"), bg=control_bg, fg=fg).pack(side="left")
+    tk.Button(g_head, text="✔", width=2, bg="#2ecc71", fg="black", relief="flat", command=apply_noise_only).pack(
+        side="right")
+    gauss_lbl = make_value_label(gauss_frame, f"{gauss_var.get():.0f}", bg=control_bg, fg=fg)
+    make_colored_scale(gauss_frame, gauss_var, 0, 100, gauss_lbl, fmt_fn=lambda x: f"{float(x):.0f}", resolution=1,
+                       slider_color=SLIDER_COLOR_DEFAULT, sliderlength=16)
+
+    # Szum Pieprz i Sól
+    sp_frame = ttk.Frame(noise_view)
+    sp_frame.pack(side="left", padx=PADX)
+    sp_head = tk.Frame(sp_frame, bg=control_bg)
+    sp_head.pack(fill="x")
+    tk.Label(sp_head, text=t("Szum_SaltPepper"), bg=control_bg, fg=fg).pack(side="left")
+    tk.Button(sp_head, text="✔", width=2, bg="#2ecc71", fg="black", relief="flat", command=apply_noise_only).pack(
+        side="right")
+    sp_lbl = make_value_label(sp_frame, f"{saltpepper_var.get():.1f} %", bg=control_bg, fg=fg)
+    make_colored_scale(sp_frame, saltpepper_var, 0, 10, sp_lbl, fmt_fn=lambda x: f"{float(x):.1f} %", resolution=0.1,
+                       slider_color=SLIDER_COLOR_DEFAULT, sliderlength=16)
+
+    # === WIDOK 2: FILTRY ===
+
+    # Strzałka powrotu (Czerwona z rysunku)
+    btn_back = tk.Button(filters_view, text="⬅", command=show_noise,
+                         bg="#e74c3c", fg="white", font=("TkDefaultFont", 16, "bold"),
+                         relief="flat", padx=10)
+    btn_back.pack(side="left", padx=10, pady=20)
+
+    # Filtr Medianowy
+    median_frame = ttk.Frame(filters_view)
+    median_frame.pack(side="left", padx=PADX)
     ttk.Label(median_frame, text=t("median_filter")).pack(anchor="w")
 
     def fmt_m(v):
-        r = int(float(v))
+        r = int(float(v));
         k = 2 * r + 1
         return f"radius {r} → kernel {k}×{k}"
 
-    med_lbl = make_value_label(
-        median_frame, fmt_m(median_var.get()), bg=control_bg, fg=fg
-    )
-    make_colored_scale(
-        median_frame,
-        median_var,
-        0,
-        5,
-        med_lbl,
-        fmt_fn=lambda x: fmt_m(x),
-        resolution=1,
-        slider_color=SLIDER_COLOR_DEFAULT,
-        sliderlength=16,
-    )
-    median_btn = ttk.Button(
-        median_frame,
-        text=t("apply_median"),
-        command=lambda b=None: apply_median_bg(median_btn),
-        style="Gray.TButton",
-    )
+    med_lbl = make_value_label(median_frame, fmt_m(median_var.get()), bg=control_bg, fg=fg)
+    make_colored_scale(median_frame, median_var, 0, 5, med_lbl, fmt_fn=fmt_m, resolution=1,
+                       slider_color=SLIDER_COLOR_DEFAULT, sliderlength=16)
+    median_btn = ttk.Button(median_frame, text=t("apply_median"), command=lambda: apply_median_bg(median_btn),
+                            style="Gray.TButton")
     median_btn.pack(fill="x", pady=(2, 8))
 
-    # 3: LPF
-    lpf_frame = ttk.Frame(top_bar)
-    lpf_frame.grid(row=1, column=1, padx=PADX, sticky="w")
-
+    # Filtr LPF (Gaussian)
+    lpf_frame = ttk.Frame(filters_view)
+    lpf_frame.pack(side="left", padx=PADX)
     ttk.Label(lpf_frame, text=t("lpf_filter")).pack(anchor="w")
-    lpf_lbl = make_value_label(
-        lpf_frame, f"{lpf_var.get():.1f} px", bg=control_bg, fg=fg
-    )
-    make_colored_scale(
-        lpf_frame,
-        lpf_var,
-        0,
-        10,
-        lpf_lbl,
-        fmt_fn=lambda x: f"{float(x):.1f} px",
-        resolution=0.1,
-        slider_color=SLIDER_COLOR_DEFAULT,
-    )
-    lpf_btn = ttk.Button(
-        lpf_frame,
-        text=t("apply_lpf"),
-        command=lambda b=None: apply_lpf_bg(lpf_btn),
-        style="Gray.TButton",
-    )
+    lpf_lbl = make_value_label(lpf_frame, f"{lpf_var.get():.1f} px", bg=control_bg, fg=fg)
+    make_colored_scale(lpf_frame, lpf_var, 0, 10, lpf_lbl, fmt_fn=lambda x: f"{float(x):.1f} px", resolution=0.1,
+                       slider_color=SLIDER_COLOR_DEFAULT)
+    lpf_btn = ttk.Button(lpf_frame, text=t("apply_lpf"), command=lambda: apply_lpf_bg(lpf_btn), style="Gray.TButton")
     lpf_btn.pack(fill="x", pady=(2, 8))
 
-    # 4: Wektorowa mediana
-    vec_frame = ttk.Frame(top_bar)
-    vec_frame.grid(row=1, column=2, padx=PADX, sticky="w")
-
+    # Filtr Wektorowy
+    vec_frame = ttk.Frame(filters_view)
+    vec_frame.pack(side="left", padx=PADX)
     ttk.Label(vec_frame, text=t("vector_median")).pack(anchor="w")
 
     def fmt_vec(v):
-        r = int(float(v))
+        r = int(float(v));
         k = 2 * r + 1
         return f"{r} → window {k}×{k}"
 
-    vec_lbl = make_value_label(
-        vec_frame,
-        fmt_vec(vector_radius_var.get()),
-        bg=control_bg,
-        fg=fg,
-    )
-    make_colored_scale(
-        vec_frame,
-        vector_radius_var,
-        1,
-        5,
-        vec_lbl,
-        fmt_fn=lambda x: fmt_vec(x),
-        resolution=1,
-        slider_color=SLIDER_COLOR_DEFAULT,
-        sliderlength=16,
-    )
-    vec_btn = ttk.Button(
-        vec_frame,
-        text=t("apply_vector_median"),
-        command=lambda b=None: apply_vector_median_bg(vec_btn),
-        style="Gray.TButton",
-    )
+    vec_lbl = make_value_label(vec_frame, fmt_vec(vector_radius_var.get()), bg=control_bg, fg=fg)
+    make_colored_scale(vec_frame, vector_radius_var, 1, 5, vec_lbl, fmt_fn=fmt_vec, resolution=1,
+                       slider_color=SLIDER_COLOR_DEFAULT, sliderlength=16)
+    vec_btn = ttk.Button(vec_frame, text=t("apply_vector_median"), command=lambda: apply_vector_median_bg(vec_btn),
+                         style="Gray.TButton")
     vec_btn.pack(fill="x", pady=(2, 8))
 
-    # rozciąganie kolumn w poziomie (0..4)
-    for col in range(5):
-        top_bar.grid_columnconfigure(col, weight=1)
-
-
-    # --- PANEL BOCZNY: reszta opcji ---
-
-    ttk.Button(controls, text=t("open"), command=open_image, style="Gray.TButton").pack(
-        fill="x", pady=6
-    )
-    ttk.Button(controls, text=t("save"), command=save_image, style="Gray.TButton").pack(
-        fill="x", pady=6
-    )
-    ttk.Button(
-        controls, text=t("reset"), command=reset_image, style="Gray.TButton"
-    ).pack(fill="x", pady=6)
-  
-
-    ttk.Separator(controls).pack(fill="x", pady=4)
-
-        # Przestrzeń barw + wizualizacja kanałów (po lewej stronie)
+    # --- POZOSTAŁA CZĘŚĆ PANELU BOCZNEGO (BEZ ZMIAN) ---
     ttk.Label(controls, text=t("color_space")).pack(anchor="w", pady=(6, 0))
-    ttk.Combobox(
-        controls,
-        textvariable=color_space_var,
-        values=["RGB", "HSV", "HSI", "CIELAB"],
-        state="readonly",
-    ).pack(fill="x", pady=(0, 6))
-
-    ttk.Button(
-        controls,
-        text=t("visualize_channels"),
-        command=visualize_channels,
-        style="Gray.TButton",
-    ).pack(fill="x", pady=(0, 10))
-
-    ttk.Button(
-        controls,
-        text=t("visualize_channels_gray"),
-        command=visualize_channels_gray,
-        style="Gray.TButton",
-    ).pack(fill="x", pady=(0, 10))
-
-
+    ttk.Combobox(controls, textvariable=color_space_var, values=["RGB", "HSV", "HSI", "CIELAB"], state="readonly").pack(
+        fill="x", pady=(0, 6))
+    ttk.Button(controls, text=t("visualize_channels"), command=visualize_channels, style="Gray.TButton").pack(fill="x",
+                                                                                                              pady=(0,
+                                                                                                                    10))
+    ttk.Button(controls, text=t("visualize_channels_gray"), command=visualize_channels_gray, style="Gray.TButton").pack(
+        fill="x", pady=(0, 10))
 
     ttk.Label(controls, text=t("color_balance")).pack(anchor="w")
     cb_frame = ttk.Frame(controls)
     cb_frame.pack(fill="x")
 
-    def fmt_rgb(v):
-        return f"{int(float(v)*100)}%"
+    def fmt_percent(v):
+        return f"{int(float(v) * 100)}%"
 
-    for var, knob_color in (
-        (color_balance_r, SLIDER_COLOR_R),
-        (color_balance_g, SLIDER_COLOR_G),
-        (color_balance_b, SLIDER_COLOR_B),
-    ):
+    for var, knob_color in ((color_balance_r, SLIDER_COLOR_R), (color_balance_g, SLIDER_COLOR_G),
+                            (color_balance_b, SLIDER_COLOR_B)):
         sub = tk.Frame(cb_frame, bg=control_bg)
         sub.pack(fill="x", pady=6)
-        lbl = make_value_label(sub, fmt_rgb(var.get()), bg=control_bg, fg=fg)
-        make_colored_scale(
-            sub,
-            var,
-            0,
-            2,
-            lbl,
-            fmt_fn=lambda x, fn=fmt_rgb: fn(float(x)),
-            resolution=0.01,
-            slider_color=knob_color,
-        )
+        lbl = make_value_label(sub, fmt_percent(var.get()), bg=control_bg, fg=fg)
+        make_colored_scale(sub, var, 0, 2, lbl, fmt_fn=fmt_percent, resolution=0.01, slider_color=knob_color)
 
     ttk.Label(controls, text=t("hue")).pack(anchor="w", pady=(6, 0))
-    hue_lbl = make_value_label(
-        controls, f"{int(hue_var.get())}°", bg=control_bg, fg=fg
-    )
-    make_colored_scale(
-        controls,
-        hue_var,
-        -180,
-        180,
-        hue_lbl,
-        fmt_fn=lambda x: f"{int(float(x))}°",
-        resolution=1,
-        slider_color=SLIDER_COLOR_HUE,
-    )
+    hue_lbl = make_value_label(controls, f"{int(hue_var.get())}°", bg=control_bg, fg=fg)
+    make_colored_scale(controls, hue_var, -180, 180, hue_lbl, fmt_fn=lambda x: f"{int(float(x))}°", resolution=1,
+                       slider_color=SLIDER_COLOR_HUE)
 
     ttk.Label(controls, text=t("saturation")).pack(anchor="w", pady=(6, 0))
-    sat_lbl = make_value_label(
-        controls, f"{int(saturation_var.get()*100)}%", bg=control_bg, fg=fg
-    )
-    make_colored_scale(
-        controls,
-        saturation_var,
-        0,
-        3,
-        sat_lbl,
-        fmt_fn=lambda x: f"{int(float(x)*100)}%",
-        resolution=0.01,
-        slider_color=SLIDER_COLOR_DEFAULT,
-    )
+    sat_lbl = make_value_label(controls, f"{int(saturation_var.get() * 100)}%", bg=control_bg, fg=fg)
+    make_colored_scale(controls, saturation_var, 0, 3, sat_lbl, fmt_fn=fmt_percent, resolution=0.01,
+                       slider_color=SLIDER_COLOR_DEFAULT)
 
     ttk.Label(controls, text=t("sepia")).pack(anchor="w", pady=(6, 0))
-    sep_lbl = make_value_label(
-        controls, f"{int(sepia_var.get()*100)}%", bg=control_bg, fg=fg
-    )
-    make_colored_scale(
-        controls,
-        sepia_var,
-        0,
-        1,
-        sep_lbl,
-        fmt_fn=lambda x: f"{int(float(x)*100)}%",
-        resolution=0.01,
-        slider_color=SLIDER_COLOR_DEFAULT,
-    )
+    sep_lbl = make_value_label(controls, f"{int(sepia_var.get() * 100)}%", bg=control_bg, fg=fg)
+    make_colored_scale(controls, sepia_var, 0, 1, sep_lbl, fmt_fn=fmt_percent, resolution=0.01,
+                       slider_color=SLIDER_COLOR_DEFAULT)
 
     eq_frame = tk.Frame(controls, bg=control_bg)
     eq_frame.pack(fill="x", pady=(6, 0))
-    eq_cb = tk.Checkbutton(
-        eq_frame,
-        text=t("equalize"),
-        variable=equalize_var,
-        command=debounced_apply,
-        bg=control_bg,
-        fg=fg,
-        activebackground=control_bg,
-        selectcolor=control_bg,
-    )
-    eq_cb.pack(anchor="w")
+    tk.Checkbutton(eq_frame, text=t("equalize"), variable=equalize_var, command=debounced_apply, bg=control_bg, fg=fg,
+                   activebackground=control_bg, selectcolor=control_bg).pack(anchor="w")
 
     ttk.Label(controls, text=t("blur")).pack(anchor="w", pady=(6, 0))
-    blur_lbl = make_value_label(
-        controls, f"{blur_var.get():.1f} px", bg=control_bg, fg=fg
-    )
-    make_colored_scale(
-        controls,
-        blur_var,
-        0,
-        10,
-        blur_lbl,
-        fmt_fn=lambda x: f"{float(x):.1f} px",
-        resolution=0.1,
-        slider_color=SLIDER_COLOR_DEFAULT,
-    )
+    blur_lbl = make_value_label(controls, f"{blur_var.get():.1f} px", bg=control_bg, fg=fg)
+    make_colored_scale(controls, blur_var, 0, 10, blur_lbl, fmt_fn=lambda x: f"{float(x):.1f} px", resolution=0.1,
+                       slider_color=SLIDER_COLOR_DEFAULT)
 
     ttk.Label(controls, text=t("sharpen")).pack(anchor="w", pady=(6, 0))
-    sharp_lbl = make_value_label(
-        controls, f"{int(sharpen_var.get()*100)}%", bg=control_bg, fg=fg
-    )
-    make_colored_scale(
-        controls,
-        sharpen_var,
-        0,
-        5,
-        sharp_lbl,
-        fmt_fn=lambda x: f"{int(float(x)*100)}%",
-        resolution=0.01,
-        slider_color=SLIDER_COLOR_DEFAULT,
-    )
+    sharp_lbl = make_value_label(controls, f"{int(sharpen_var.get() * 100)}%", bg=control_bg, fg=fg)
+    make_colored_scale(controls, sharpen_var, 0, 5, sharp_lbl, fmt_fn=fmt_percent, resolution=0.01,
+                       slider_color=SLIDER_COLOR_DEFAULT)
 
-    ttk.Button(
-        controls, text=t("fullscreen"), command=toggle_fullscreen, style="Gray.TButton"
-    ).pack(fill="x", pady=6)
-
-    hint_lbl = tk.Label(
-        controls, text=t("hint"), wraplength=220, bg=control_bg, fg=fg
-    )
-    hint_lbl.pack(pady=(12, 0))
+    ttk.Button(controls, text=t("fullscreen"), command=toggle_fullscreen, style="Gray.TButton").pack(fill="x", pady=6)
     ttk.Separator(controls).pack(fill="x", pady=6)
 
     controls_canvas.update_idletasks()
